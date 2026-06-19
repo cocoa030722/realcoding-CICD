@@ -1,0 +1,99 @@
+===============================================================
+  Spring PetClinic — CI/CD 배포 방법 정리
+  작성일: 2026-06-19
+===============================================================
+
+---------------------------------------------------------------
+1. 현재 구성된 GitHub Actions 워크플로
+---------------------------------------------------------------
+
+[1-1] CI: 빌드 & 테스트 (.github/workflows/maven-build.yml)
+  - 트리거: main 브랜치 push 또는 PR
+  - 실행 환경: ubuntu-latest, JDK 17
+  - 실행 명령: ./mvnw -B verify
+    → 컴파일 + 단위/통합 테스트 + 패키징 수행
+    → 테스트 실패 시 PR 머지 차단
+  - Maven 의존성 캐싱으로 반복 빌드 속도 향상
+
+[1-2] CD: Kubernetes 클러스터 배포 테스트 (.github/workflows/deploy-and-test-cluster.yml)
+  - 트리거: main 브랜치의 k8s/ 폴더 변경 시
+  - 실행 순서:
+      1. Kind(로컬 K8s 클러스터) 생성
+      2. kubectl apply -f k8s/  (DB + 앱 동시 배포)
+      3. Pod Ready 상태 대기 (최대 180초)
+  - 배포 대상:
+      k8s/db.yml         → PostgreSQL Pod + Secret + Service
+      k8s/petclinic.yml  → 앱 Deployment + NodePort Service (포트 80→8080)
+
+---------------------------------------------------------------
+2. 전체 배포 흐름 (End-to-End)
+---------------------------------------------------------------
+
+  개발자 코드 작성
+        ↓
+  git push → GitHub
+        ↓
+  [CI] maven-build.yml 자동 실행
+        ├─ JDK 17 설치
+        ├─ ./mvnw -B verify (빌드 + 테스트)
+        └─ 실패 시 → PR 머지 차단
+        ↓ (테스트 통과)
+  [CD] deploy-and-test-cluster.yml (k8s/ 변경 시만 실행)
+        ├─ Kind로 로컬 K8s 클러스터 생성
+        ├─ kubectl apply -f k8s/db.yml     (PostgreSQL 배포)
+        ├─ kubectl apply -f k8s/petclinic.yml (앱 배포)
+        └─ Pod Ready 대기 확인
+
+---------------------------------------------------------------
+3. 로컬 개발 환경 실행 (Docker Compose)
+---------------------------------------------------------------
+
+  # DB만 띄우고 앱은 로컬에서 실행
+  docker compose up -d
+
+  # MySQL 프로파일로 실행
+  ./mvnw spring-boot:run -Dspring-boot.run.profiles=mysql
+
+  # PostgreSQL 프로파일로 실행
+  ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
+
+  docker-compose.yml 구성:
+    - mysql:    포트 3306, 사용자/DB: petclinic
+    - postgres: 포트 5432, 사용자/DB: petclinic
+
+---------------------------------------------------------------
+4. 운영 배포를 위해 추가해야 할 단계
+---------------------------------------------------------------
+
+  현재 파이프라인은 CI 검증 + 로컬 K8s 테스트 수준.
+  실제 운영 배포로 확장 시 아래 단계 추가 필요:
+
+  [4-1] Docker 이미지 빌드 (Dockerfile 불필요 — Cloud Native Buildpacks 사용)
+    ./mvnw spring-boot:build-image \
+      -Dspring-boot.build-image.imageName=ghcr.io/<org>/<repo>:<sha>
+
+  [4-2] 컨테이너 레지스트리에 푸시
+    docker push ghcr.io/<org>/<repo>:<sha>
+    (GitHub Container Registry, DockerHub, ECR, GCR 등 선택)
+
+  [4-3] 운영 K8s 클러스터에 배포 (EKS, GKE, AKS 등)
+    kubectl set image deployment/petclinic workload=ghcr.io/<org>/<repo>:<sha>
+    또는 Helm chart로 관리
+
+  [4-4] GitHub Actions 시크릿 설정 필요
+    - REGISTRY_USERNAME / REGISTRY_PASSWORD (레지스트리 인증)
+    - KUBECONFIG (운영 클러스터 접근)
+
+---------------------------------------------------------------
+5. 단계별 도구 요약
+---------------------------------------------------------------
+
+  단계               | 도구                        | 트리거
+  -------------------|-----------------------------|-----------------------
+  빌드 & 테스트      | GitHub Actions + Maven      | 모든 push/PR
+  K8s 배포 테스트    | Kind + kubectl              | k8s/ 변경 시
+  로컬 DB 환경       | Docker Compose              | 수동 실행
+  (확장) 이미지 빌드 | Spring Boot Buildpacks      | 워크플로에 추가 필요
+  (확장) 운영 배포   | kubectl / Helm              | 워크플로에 추가 필요
+
+===============================================================
