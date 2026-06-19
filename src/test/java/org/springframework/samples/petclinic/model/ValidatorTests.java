@@ -46,6 +46,12 @@ class ValidatorTests {
 	}
 
 	@Test
+	void ciFailureDemo() {
+		// 캡처 7: CI 실패 시 PR 머지 차단 증명용 의도적 실패 테스트
+		assertThat(1).isEqualTo(2);
+	}
+
+	@Test
 	void shouldNotValidateWhenFirstNameEmpty() {
 		LocaleContextHolder.setLocale(Locale.ENGLISH);
 
