@@ -62,3 +62,4 @@ spec:
             sources:
               - secret:
                   name: demo-db
+# 주석: 깃허브 액션 체크용
